@@ -1,0 +1,115 @@
+= Istio Routing Mission
+
+== Purpose
+Showcases Istio's dynamic routing capabilities with a minimal set of example applications.
+
+== Prerequisites
+. Openshift 3.10 cluster
+. Istio 1.0.x installed on the aforementioned cluster using the link:https://github.com/Maistra/istio-operator[Istio Operator].
+.. Follow link:https://github.com/Maistra/openshift-ansible/blob/maistra-0.1.0-ocp-3.1.0-istio-1.0.0/istio/Installation.md[these] instructions for more information about the Operator
+. Login to the cluster with the *admin* user
+
+== Environment preparation
+
+Create a new project/namespace on the cluster. This is where your application will be deployed.
+
+```bash
+oc new-project <whatever valid project name you want>
+```
+
+== Build and deploy the application
+
+=== With Fabric8 Maven Plugin (FMP)
+Execute the following command to build the project and deploy it to OpenShift:
+```bash
+mvn clean fabric8:deploy -Popenshift
+```
+Configuration for FMP may be found both in pom.xml and `src/main/fabric8` files/folders.
+
+This configuration is used to define service names and deployments that control how pods are labeled/versioned on the OpenShift cluster. Labels and versions are key concepts for creating load-balanced or multi-versioned pods in a service.
+
+
+=== With Source to Image build (S2I)
+Run the following commands to apply and execute the OpenShift templates that will configure and deploy the applications:
+```bash
+find . | grep openshiftio | grep application | xargs -n 1 oc apply -f
+
+oc new-app --template=spring-boot-istio-routing-booster-client -p SOURCE_REPOSITORY_URL=https://github.com/snowdrop/spring-boot-istio-routing-booster -p SOURCE_REPOSITORY_REF=master -p SOURCE_REPOSITORY_DIR=spring-boot-istio-routing-client
+oc new-app --template=spring-boot-istio-routing-booster-service-a -p SOURCE_REPOSITORY_URL=https://github.com/snowdrop/spring-boot-istio-routing-booster -p SOURCE_REPOSITORY_REF=master -p SOURCE_REPOSITORY_DIR=spring-boot-istio-routing-service-a
+oc new-app --template=spring-boot-istio-routing-booster-service-b -p SOURCE_REPOSITORY_URL=https://github.com/snowdrop/spring-boot-istio-routing-booster -p SOURCE_REPOSITORY_REF=master -p SOURCE_REPOSITORY_DIR=spring-boot-istio-routing-service-b
+```
+
+= Use Cases
+== Access the application via the Istio ingress-gateway
+
+. Create a Gateway to forward traffic to the demo application.
++
+This is only necessary if your application accepts traffic at a different port/url than the default. In this case, our application accepts traffic at `/`, but we will access it with the path `/example`.
++
+```bash
+oc apply -f rules/client-gateway-rule.yml -n $(oc project -q)
+```
+
+. Access the application
++
+Run the following command to determine the appropriate URL to access our demo. Make sure you access the url with the HTTP scheme. HTTPS is NOT enabled by default:
++
+```bash
+echo http://$(oc get route istio-ingressgateway -o jsonpath='{.spec.host}{"\n"}' -n istio-system)/example/
+```
++
+The result of the above command is the istio-system istio-ingressgateway URL, appended with the Gateway path we defined above. Open this URL in your a web browser.
+
+== Transfer load between two versions of an application/service
+
+. Access the application as described in the previous use case
+.. Click "Invoke Service" in the client UI (Do this several times.)
+.. Notice that the services are load-balanced at exactly 50%, which is the default cluster behavior.
+
+. Configure a VirtualService to enable weight-based version routing (load-balancing)
+Sometimes it is important to slowly direct traffic to a new service over time, or use alternate weighting. In this case, we will supply an Istio VirtualService to control load balancing behavior.
++
+Run the following command:
++
+```bash
+oc apply -f rules/load-balancing-rule.yml
+```
++
+The VirtualService defined in the file above uses labels "a" and "b" to identify each unique version of the service. If multiple services match any of these labels, traffic will be divided between them accordingly. Additional routes/weights can be supplied using additional labels/service versions as desired.
+. Click "Invoke Service" in the client UI
++
+Do this several times. You will notice that traffic is no longer routed at 50/50%, and more traffic is directed to service version B than service version A. Adjust the weights in the rule-file and re-run the command above. You should see traffic adjust accordingly.
++
+NOTE: It could take several seconds for the VirtualService to be detected and applied by Istio.
+
+Congratulations! You now know how to direct traffic between different versions of a service using Istio VirtualService.
+
+== Undeploy the application
+
+=== With Fabric8 Maven Plugin (FMP)
+```bash
+mvn fabric8:undeploy
+```
+
+=== With Source to Image build (S2I)
+```bash
+oc delete all --all
+oc delete ingress --all
+find . | grep openshiftio | grep application | xargs -n 1 oc delete -f
+```
+
+=== Remove the namespace
+This will delete the project from the OpenShift cluster
+```bash
+oc delete project <your project name>
+```
+
+
+== Integration tests
+
+To run integration tests, create a new namespace and run maven job
+```bash
+oc new-project <project-name>
+mvn clean verify -Popenshift,openshift-it
+```
+
